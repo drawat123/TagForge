@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: tagforge-postgres
+    environment:
+      POSTGRES_DB: tagforge
+      POSTGRES_USER: tagforge
+      POSTGRES_PASSWORD: tagforge
+    ports:
+      - "5433:5432"
+    volumes:
+      - tagforge-pgdata:/var/lib/postgresql/data
+
+volumes:
+  tagforge-pgdata:

@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: tagforge-server
+  datasource:
+    url: jdbc:postgresql://localhost:5433/tagforge
+    username: tagforge
+    password: tagforge
+  flyway:
+    enabled: true
