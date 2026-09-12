@@ -13,3 +13,10 @@ spring:
       # against the real tables at startup and refuse to start if they differ.
       ddl-auto: validate
     open-in-view: false
+
+tagforge:
+  mqtt:
+    broker-url: tcp://localhost:1883
+    client-id: tagforge-server
+    topic-filter: v1/devices/+/telemetry
+    qos: 1
