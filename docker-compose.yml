@@ -11,5 +11,13 @@ services:
     volumes:
       - tagforge-pgdata:/var/lib/postgresql/data
 
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: tagforge-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
 volumes:
   tagforge-pgdata:
