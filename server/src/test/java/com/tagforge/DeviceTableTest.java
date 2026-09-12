@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/** Checks the migration ran and the raw table round-trips. */
 @SpringBootTest
 class DeviceTableTest {
 
