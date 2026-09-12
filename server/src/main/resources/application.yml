@@ -7,3 +7,9 @@ spring:
     password: tagforge
   flyway:
     enabled: true
+  jpa:
+    hibernate:
+      # Flyway owns the schema. `validate` makes Hibernate check the entities
+      # against the real tables at startup and refuse to start if they differ.
+      ddl-auto: validate
+    open-in-view: false
