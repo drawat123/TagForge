@@ -1,5 +1,8 @@
 package com.tagforge.telemetry.mqtt;
 
+import tools.jackson.databind.ObjectMapper;
+import com.tagforge.telemetry.dto.TelemetryUpload;
+import com.tagforge.telemetry.service.TelemetryService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.paho.mqttv5.client.IMqttToken;
@@ -16,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * Subscribes to device telemetry and hands each message on.
@@ -29,10 +33,16 @@ public class MqttIngestionClient implements MqttCallback {
     private static final Logger log = LoggerFactory.getLogger(MqttIngestionClient.class);
 
     private final com.tagforge.telemetry.mqtt.MqttProperties properties;
+    private final TelemetryService telemetryService;
+    private final ObjectMapper objectMapper;
     private MqttClient client;
 
-    public MqttIngestionClient(com.tagforge.telemetry.mqtt.MqttProperties properties) {
+    public MqttIngestionClient(com.tagforge.telemetry.mqtt.MqttProperties properties,
+                               TelemetryService telemetryService,
+                               ObjectMapper objectMapper) {
         this.properties = properties;
+        this.telemetryService = telemetryService;
+        this.objectMapper = objectMapper;
     }
 
     @PostConstruct
@@ -54,11 +64,41 @@ public class MqttIngestionClient implements MqttCallback {
                 properties.brokerUrl(), properties.topicFilter(), properties.qos());
     }
 
+    /**
+     * Runs on Paho's network thread, and does a database write per value. That is
+     * the naive path on purpose — it is the thing to measure before improving.
+     *
+     * Paho sends the PUBACK when this returns, including when it throws, so a
+     * message that fails here is acked and gone. Manual acknowledgement is the
+     * fix, once failures have somewhere to go.
+     */
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
-        log.info("MQTT message on {} ({} bytes, qos {}, duplicate {}): {}",
-                topic, message.getPayload().length, message.getQos(), message.isDuplicate(), payload);
+        try {
+            UUID deviceId = deviceIdFrom(topic);
+            TelemetryUpload upload = objectMapper.readValue(payload, TelemetryUpload.class);
+            telemetryService.store(deviceId, upload);
+            log.debug("Stored {} values for {}", upload.values().size(), deviceId);
+        } catch (Exception e) {
+            // Never propagate: an exception here would tear down the callback thread.
+            log.warn("Discarding message on {}: {} ({})", topic, e.getMessage(), payload);
+            log.debug("Cause", e);
+        }
+    }
+
+    /**
+     * v1/devices/{deviceId}/telemetry — segment 2.
+     *
+     * Trusting the topic is only sound once the broker's ACL pattern restricts a
+     * device to publishing under its own id.
+     */
+    private static UUID deviceIdFrom(String topic) {
+        String[] segments = topic.split("/");
+        if (segments.length != 4) {
+            throw new IllegalArgumentException("Unexpected topic shape: " + topic);
+        }
+        return UUID.fromString(segments[2]);
     }
 
     /**
