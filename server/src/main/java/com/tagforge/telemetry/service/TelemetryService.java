@@ -1,6 +1,8 @@
 package com.tagforge.telemetry.service;
 
 import com.tagforge.device.service.DeviceService;
+import com.tagforge.telemetry.dto.KeyedPoint;
+import com.tagforge.telemetry.dto.TelemetryPoint;
 import com.tagforge.telemetry.dto.TelemetryUpload;
 import com.tagforge.telemetry.repository.TelemetryRepository;
 import org.slf4j.Logger;
@@ -8,8 +10,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Stores a telemetry message.
@@ -54,5 +59,31 @@ public class TelemetryService {
             default -> log.warn("Unsupported value type {} for {} on {}",
                     value.getClass().getSimpleName(), key, deviceId);
         }
+    }
+
+    /** Most recent reading per key. One row per key regardless of history size. */
+    public Map<String, TelemetryPoint> latest(UUID deviceId, String[] keys) {
+        deviceService.findById(deviceId);
+
+        Map<String, TelemetryPoint> result = new LinkedHashMap<>();
+        for (KeyedPoint point : telemetryRepository.findLatest(deviceId, keys)) {
+            result.put(point.key(), new TelemetryPoint(point.ts(), point.value()));
+        }
+        return result;
+    }
+
+    /**
+     * Readings in a half-open range, grouped by key so a chart gets one series per
+     * key and the key name is not repeated on every point.
+     */
+    public Map<String, List<TelemetryPoint>> range(UUID deviceId, String[] keys,
+                                                   Instant from, Instant to, int limit) {
+        deviceService.findById(deviceId);
+
+        return telemetryRepository.findRange(deviceId, keys, from, to, limit).stream()
+                .collect(Collectors.groupingBy(
+                        KeyedPoint::key,
+                        LinkedHashMap::new,
+                        Collectors.mapping(p -> new TelemetryPoint(p.ts(), p.value()), Collectors.toList())));
     }
 }
