@@ -36,12 +36,22 @@ is measurably too slow. Make me run the naive version and see the number.
 ## What we're building
 
 - `/server` — Spring Boot: devices, MQTT ingestion, telemetry storage, threshold alarms
-- `/simulator` — C++17: virtual PLCs, the load generator that makes performance measurable
-- `/agent` — C++17: polls a device, buffers to disk when the uplink drops, backfills
+- `/simulator` — Java: virtual PLCs, the load generator that makes performance measurable
+- `/agent` — Java: polls a device, buffers to disk when the uplink drops, backfills
 - `/web` — Angular, thin and late
 
 Multi-tenancy, 10,000 devices, time-series storage and the edge agent are all **later**. They're
 the destination, not the starting point.
+
+**One language, deliberately.** The simulator and agent were originally scoped as C++17. The hard
+parts of both are distributed-systems problems — buffering, backfill, ordering, deduplication,
+finding where a load curve bends — and none of them need C++. Java 21 virtual threads make 10,000
+concurrent MQTT clients straightforward. If C++ is worth learning it deserves a project with a real
+reason to need it, not a component bolted on here to justify an earlier decision.
+
+The one cost to stay aware of: a GC pause in the simulator looks exactly like server latency in the
+results. Measure with GC logging on, or a stall in the load generator sends us hunting for a
+bottleneck that isn't there.
 
 ## Roadmap
 
