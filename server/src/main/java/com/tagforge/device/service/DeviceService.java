@@ -34,4 +34,20 @@ public class DeviceService {
         return deviceRepository.findById(id)
                 .orElseThrow(() -> new DeviceNotFoundException(id));
     }
+
+    /**
+     * Deletes the device row only. Its telemetry is left in place: there is no
+     * foreign key, nothing joins to device, and ingestion rejects unknown ids so
+     * no new readings can appear. Cascading would mean deleting up to a week of
+     * readings synchronously -- tens of millions of rows at target load -- while
+     * holding locks on the hottest table in the system. Retention removes them
+     * instead.
+     */
+    @Transactional
+    public void delete(UUID id) {
+        if (!deviceRepository.existsById(id)) {
+            throw new DeviceNotFoundException(id);
+        }
+        deviceRepository.deleteById(id);
+    }
 }

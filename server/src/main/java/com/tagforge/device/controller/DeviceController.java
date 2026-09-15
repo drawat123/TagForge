@@ -72,4 +72,28 @@ public class DeviceController {
     public ResponseEntity<DeviceResponse> get(@PathVariable UUID id) {
         return ResponseEntity.ok(DeviceResponse.from(deviceService.findById(id)));
     }
+
+    /**
+     * 204 rather than 200: there is nothing useful to return, and an empty body
+     * with a 200 invites clients to look for one.
+     *
+     * An unknown id is 404 rather than a silent 204, so a caller can distinguish
+     * "deleted" from "was never there" -- worth more here than strict idempotency,
+     * since the simulator uses it to clean up devices it believes it created.
+     */
+    @Operation(summary = "Delete a device",
+            description = "Removes the device row. Its telemetry is left in place and "
+                    + "removed by retention; nothing joins to device and ingestion "
+                    + "rejects unknown ids, so orphaned readings are inert.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Deleted"),
+            @ApiResponse(responseCode = "404", description = "No device with that id",
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        deviceService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
 }

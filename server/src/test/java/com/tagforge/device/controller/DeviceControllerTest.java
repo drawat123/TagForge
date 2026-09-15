@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -93,5 +94,30 @@ class DeviceControllerTest {
                         .content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.name").value("name must not be blank"));
+    }
+
+    @Test
+    void deleteRemovesTheDeviceAndIsThen404() throws Exception {
+        String created = mockMvc.perform(post("/devices")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"doomed\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        String id = JsonPath.read(created, "$.id");
+
+        mockMvc.perform(delete("/devices/{id}", id))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/devices/{id}", id))
+                .andExpect(status().isNotFound());
+    }
+
+    /** 404 rather than a silent 204, so a caller can tell "deleted" from "never existed". */
+    @Test
+    void deletingAnUnknownIdReturns404() throws Exception {
+        mockMvc.perform(delete("/devices/{id}", UUID.randomUUID()))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(PROBLEM_JSON));
     }
 }
