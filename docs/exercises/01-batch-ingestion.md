@@ -22,8 +22,41 @@ A psql experiment measured what that costs, writing the same 1,000 rows three wa
 | 1,000 inserts, one transaction | 16,949 | 59 | **4.5x** — commits removed |
 | 1,000 rows, one statement | 50,000 | 20 | **13.1x** — round trips removed too |
 
-So batching should give roughly 13x: **128 → ~1,700 messages/sec**. Still 6x short of target, which
-is the point of measuring before building. Concurrency is a separate exercise.
+So batching should give roughly 13x. Still short of target, which is the point of measuring before
+building. Concurrency is a separate exercise.
+
+---
+
+## Predictions, written before implementing
+
+Measured baseline, 300 devices, 30 second sample:
+
+```
+6,631 values/sec = 132 messages/sec
+```
+
+Working forward from that:
+
+```
+time per message   1000 / 132  =  7.58 ms
+time per value     7.58 / 50   =   152 µs
+
+1a  one transaction   152 / 4.5  = 34 µs  → x50 = 1.68 ms  →    595 msg/s
+1b  one statement     152 / 13.1 = 12 µs  → x50 = 0.58 ms  →  1,730 msg/s
+```
+
+| | predicted | measured |
+|---|---|---|
+| baseline | — | **132 msg/s** |
+| after 1a | **595 msg/s** | |
+| after 1b | **1,730 msg/s** | |
+
+Both predictions assume the whole 7.58 ms is insert time. It is not: each message also parses
+JSON and calls `deviceService.findById`, and neither shrinks when the inserts are batched. So
+expect to land **below** these numbers.
+
+How far below is the useful part — it measures that fixed per-message cost, which becomes the
+next bottleneck once the inserts stop being one.
 
 ---
 
