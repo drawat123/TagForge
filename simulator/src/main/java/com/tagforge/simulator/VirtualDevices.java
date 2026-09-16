@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.paho.mqttv5.client.MqttActionListener;
 import org.eclipse.paho.mqttv5.client.MqttAsyncClient;
@@ -27,6 +28,9 @@ public class VirtualDevices implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(VirtualDevices.class);
     private static final String DEFAULT_BROKER_URL = "tcp://localhost:1883";
+
+    /** A shutdown hook that blocks forever is worse than an ungraceful exit. */
+    private static final long DISCONNECT_TIMEOUT_MS = 2_000;
 
     private final String brokerUrl;
     private final int tagCount;
@@ -49,6 +53,9 @@ public class VirtualDevices implements AutoCloseable {
     private final List<MqttAsyncClient> clients = Collections.synchronizedList(new ArrayList<>());
     private final List<Thread> deviceThreads = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean running = false;
+
+    /** Ctrl+C runs the shutdown hook while try-with-resources also closes; do the work once. */
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     public VirtualDevices(String brokerUrl, int tagCount, long intervalMs,
                           boolean synchronised, int qos, Metrics metrics) {
@@ -226,6 +233,9 @@ public class VirtualDevices implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         running = false;
 
         // Snapshot under the lock: iterating the live lists races with startPublish
@@ -242,16 +252,30 @@ public class VirtualDevices implements AutoCloseable {
         for (Thread thread : threadsSnapshot) {
             thread.interrupt();
         }
-        for (MqttAsyncClient client : clientsSnapshot) {
-            try {
-                if (client.isConnected()) {
-                    client.disconnect().waitForCompletion();
-                }
-                client.close();
-            } catch (MqttException e) {
-                log.warn("Error disconnecting client {}: {}", client.getClientId(), e.getMessage());
+
+        // Disconnect in parallel, for the same reason connecting is parallel: each
+        // disconnect waits for the broker to acknowledge, so doing them one at a
+        // time makes Ctrl+C take a round trip per device.
+        long start = System.nanoTime();
+        try (ExecutorService closePool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (MqttAsyncClient client : clientsSnapshot) {
+                closePool.submit(() -> {
+                    try {
+                        if (client.isConnected()) {
+                            client.disconnect().waitForCompletion(DISCONNECT_TIMEOUT_MS);
+                        }
+                        client.close();
+                    } catch (MqttException e) {
+                        // Shutting down; a failed disconnect changes nothing, and the
+                        // broker drops the session when the socket closes anyway.
+                        log.debug("Error disconnecting client {}: {}", client.getClientId(), e.getMessage());
+                    }
+                });
             }
         }
+        log.info("Disconnected {} devices in {} ms",
+                clientsSnapshot.size(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+
         clients.clear();
         deviceThreads.clear();
     }
