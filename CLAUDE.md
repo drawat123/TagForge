@@ -15,6 +15,17 @@ not design on paper for a system that doesn't exist yet — that was tried and i
 explain it. I read it, change it, and write the second one myself. Don't make me derive something
 from scratch that I've never seen finished.
 
+**I hand-write the Java and Spring, including the boilerplate.** I have five years of writing C++
+by hand, so when AI writes C++ I can judge it — I know what goes wrong. I don't have that for Java
+and Spring yet, so reading it feels like understanding without being it. Boilerplate in a framework
+I already know is free to delegate; boilerplate in one I don't is the vocabulary I'm missing.
+Review my code, name what's wrong and which concept I'm missing, and don't hand back a fixed
+version unless I ask for one.
+
+These two rules meet like this: you write the first instance of a genuinely new *shape* — the first
+controller, the first MQTT client — so I am not deriving from nothing. Everything after that is
+mine, boilerplate included.
+
 **One concept at a time.** Don't hand me a whole feature in one go. Small steps, each of which
 runs.
 
