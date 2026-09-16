@@ -1,11 +1,16 @@
 package com.tagforge.simulator;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.paho.mqttv5.client.MqttActionListener;
 import org.eclipse.paho.mqttv5.client.MqttAsyncClient;
 import org.eclipse.paho.mqttv5.client.MqttConnectionOptions;
@@ -39,8 +44,10 @@ public class VirtualDevices implements AutoCloseable {
     private final String[] tagNames;
 
     private final ObjectMapper objectMapper = JsonMapper.builder().build();
-    private final List<MqttAsyncClient> clients = new ArrayList<>();
-    private final List<Thread> deviceThreads = new ArrayList<>();
+    // Synchronised because the shutdown hook iterates these from another thread
+    // while startPublish is still adding to them.
+    private final List<MqttAsyncClient> clients = Collections.synchronizedList(new ArrayList<>());
+    private final List<Thread> deviceThreads = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean running = false;
 
     public VirtualDevices(String brokerUrl, int tagCount, long intervalMs,
@@ -89,25 +96,38 @@ public class VirtualDevices implements AutoCloseable {
         log.info("Starting {} virtual devices (interval: {} ms, arrival: {}, qos: {}, tags: {})...",
                 deviceIds.size(), intervalMs, synchronised ? "synchronised" : "spread", qos, tagCount);
 
-        int connectedCount = 0;
-        for (UUID deviceId : deviceIds) {
-            try {
-                MqttAsyncClient client = createClient(deviceId);
-                clients.add(client);
+        // Connect in parallel. Serially, each handshake waits for the broker's
+        // CONNACK before the next begins, so 300 devices took over a minute before
+        // a single message was published.
+        AtomicInteger connected = new AtomicInteger();
+        long connectStart = System.nanoTime();
 
-                Thread thread = Thread.ofVirtual()
-                        .name("device-" + deviceId)
-                        .start(() -> runDevicePublishLoop(deviceId, client));
-                deviceThreads.add(thread);
-                connectedCount++;
-            } catch (MqttException e) {
-                // Failure to connect one device must not prevent others from running.
-                log.error("Failed to connect device {}: {}", deviceId, e.getMessage());
-                if (e.getMessage() != null && e.getMessage().toLowerCase().contains("too many open files")) {
-                    log.error("Hit OS file descriptor limit! Increase with 'ulimit -n 65536'");
-                }
+        try (ExecutorService connectPool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (UUID deviceId : deviceIds) {
+                connectPool.submit(() -> {
+                    try {
+                        MqttAsyncClient client = createClient(deviceId);
+                        clients.add(client);
+
+                        Thread thread = Thread.ofVirtual()
+                                .name("device-" + deviceId)
+                                .start(() -> runDevicePublishLoop(deviceId, client));
+                        deviceThreads.add(thread);
+                        connected.incrementAndGet();
+                    } catch (MqttException e) {
+                        // One device failing to connect must not stop the others.
+                        log.error("Failed to connect device {}: {}", deviceId, e.getMessage());
+                        if (e.getMessage() != null
+                                && e.getMessage().toLowerCase().contains("too many open files")) {
+                            log.error("Hit OS file descriptor limit! Increase with 'ulimit -n 65536'");
+                        }
+                    }
+                });
             }
         }
+
+        int connectedCount = connected.get();
+        log.info("Connected in {} ms", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStart));
 
         log.info("Connected {}/{} virtual devices. Publishing telemetry... (Press Ctrl+C to stop)",
                 connectedCount, deviceIds.size());
@@ -207,10 +227,22 @@ public class VirtualDevices implements AutoCloseable {
     @Override
     public void close() {
         running = false;
-        for (Thread thread : deviceThreads) {
+
+        // Snapshot under the lock: iterating the live lists races with startPublish
+        // still adding to them, which is a ConcurrentModificationException.
+        List<Thread> threadsSnapshot;
+        List<MqttAsyncClient> clientsSnapshot;
+        synchronized (deviceThreads) {
+            threadsSnapshot = new ArrayList<>(deviceThreads);
+        }
+        synchronized (clients) {
+            clientsSnapshot = new ArrayList<>(clients);
+        }
+
+        for (Thread thread : threadsSnapshot) {
             thread.interrupt();
         }
-        for (MqttAsyncClient client : clients) {
+        for (MqttAsyncClient client : clientsSnapshot) {
             try {
                 if (client.isConnected()) {
                     client.disconnect().waitForCompletion();
